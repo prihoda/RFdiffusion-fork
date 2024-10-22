@@ -24,6 +24,8 @@ TOR_INDICES  = util.torsion_indices
 TOR_CAN_FLIP = util.torsion_can_flip
 REF_ANGLES   = util.reference_angles
 
+CACHED_MODEL = None
+CACHED_PATH = None
 
 class Sampler:
 
@@ -175,11 +177,18 @@ class Sampler:
 
     def load_checkpoint(self) -> None:
         """Loads RF checkpoint, from which config can be generated."""
-        self._log.info(f'Reading checkpoint from {self.ckpt_path}')
-        print('This is inf_conf.ckpt_path')
-        print(self.ckpt_path)
-        self.ckpt  = torch.load(
-            self.ckpt_path, map_location=self.device)
+        global CACHED_PATH, CACHED_MODEL
+        if CACHED_MODEL is None or self.ckpt_path != CACHED_PATH:
+            self._log.info(f'Reading checkpoint from {self.ckpt_path}')
+            print('This is inf_conf.ckpt_path')
+            print(self.ckpt_path)
+            CACHED_PATH = self.ckpt_path
+            CACHED_MODEL = None # make sure we don't accidentally use the wrong model
+            CACHED_MODEL  = torch.load(
+                self.ckpt_path, map_location=self.device)
+        else:
+            self._log.info(f'Using cached checkpoint: {self.ckpt_path}')
+        self.ckpt = CACHED_MODEL
 
     def assemble_config_from_chk(self) -> None:
         """
