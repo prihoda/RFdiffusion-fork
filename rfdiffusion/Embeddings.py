@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from opt_einsum import contract as einsum
 import torch.utils.checkpoint as checkpoint
 from rfdiffusion.util import get_tips
-from rfdiffusion.util_module import Dropout, create_custom_forward, rbf, init_lecun_normal
+from rfdiffusion.util_module import Dropout, create_custom_forward, rbf, init_lecun_normal, maybe_add_cyclic_offset
 from rfdiffusion.Attention_module import Attention, FeedForwardLayer, AttentionWithBias
 from rfdiffusion.Track_module import PairStr2Pair
 import math
@@ -21,10 +21,10 @@ class PositionalEncoding2D(nn.Module):
         self.emb = nn.Embedding(self.nbin, d_model)
         self.drop = nn.Dropout(p_drop)
 
-    def forward(self, x, idx):
+    def forward(self, x, idx, cyclic_offset_masks):
         bins = torch.arange(self.minpos, self.maxpos, device=x.device)
         seqsep = idx[:,None,:] - idx[:,:,None] # (B, L, L)
-        #
+        maybe_add_cyclic_offset(seqsep, cyclic_offset_masks)
         ib = torch.bucketize(seqsep, bins).long() # (B, L, L)
         emb = self.emb(ib) #(B, L, L, d_model)
         x = x + emb # add relative positional encoding
@@ -56,7 +56,7 @@ class MSA_emb(nn.Module):
 
         nn.init.zeros_(self.emb.bias)
 
-    def forward(self, msa, seq, idx):
+    def forward(self, msa, seq, idx, cyclic_offset_masks):
         # Inputs:
         #   - msa: Input MSA (B, N, L, d_init)
         #   - seq: Input Sequence (B, L)
@@ -82,7 +82,7 @@ class MSA_emb(nn.Module):
         right = (seq @ self.emb_right.weight)[:,:,None] # (B, L, 1, d_pair)
 
         pair = left + right # (B, L, L, d_pair)
-        pair = self.pos(pair, idx) # add relative position
+        pair = self.pos(pair, idx, cyclic_offset_masks) # add relative position
 
         # state embedding
         # Sergey's one hot trick
