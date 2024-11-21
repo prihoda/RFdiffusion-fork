@@ -1,3 +1,4 @@
+from typing import List
 import numpy as np
 import torch
 import torch.nn as nn
@@ -91,7 +92,59 @@ def rbf(D):
     RBF = torch.exp(-((D_expand - D_mu) / D_sigma)**2)
     return RBF
 
-def get_seqsep(idx):
+
+def get_cyclic_offset(peptide_length, device='cpu', sign=1) -> torch.Tensor:
+        """ Use sign=1 for RosettaFold, sign=-1 for AF2/ProteinMPNN"""
+        assert sign in (-1, 1)
+
+        # modified this function I created for proteinMPNN
+        # AF2, proteinMPNN do offset = idx[:,:,None] - idx[:,None,:]
+        # RosettaFold does    offset = idx[:,None,:] - idx[:,:,None]
+       
+        # all comments are now for AF2/proteinMPNN version (sign=-1)
+        # therefore the cyclic offset now at the first row starts positive ( 0, 1, 2,...)
+
+        # each subsequent row is a rotation of the distances 
+        #   (positive and negative distances as negative, if backwards in sequence, positive if forwards), the same is in AlphaFold2
+        #   the row aa is to_aa and the col aa is from_aa
+
+        # first row: how far is aa1 from aa1, aa2, aa3, ... (therefore start with 0, then -1, -2 etc.)
+        cyc_row = torch.arange(0, sign * peptide_length, sign, device=device)
+
+        # Now after the center the shorter path to get to the first amino-acid is to go forward
+        #   so do that get the after-center index
+
+        # in EvoBind there is this, but that's not optimal (wrt abs. distance) for odd peptides
+        # c = (peptide_length + 1) // 2
+        c = peptide_length // 2
+        
+        # (In even length peptides there are two possibilities with same abs value, either - or +,
+        #   in EvoBind they chose -, so we are doing it the same here)
+        cyc_row[c+1:] = torch.arange(-sign*(peptide_length - c - 1), 0, sign, device=device)
+
+        # Create the cyclic offset array by rolling the rows
+        cyclic_offset_array = torch.stack([torch.roll(cyc_row, i) for i in range(peptide_length)])
+        return cyclic_offset_array
+
+
+def maybe_add_cyclic_offset(offset, cyclic_peptide_masks: List[torch.Tensor]):
+    if cyclic_peptide_masks:
+        assert isinstance(cyclic_peptide_masks, list)
+        # now modify the offset for the cyclic peptide, offset has shape (B, L, L)
+        # cyclic peptide mask is assumed to be contiguous and have shape [L]
+        # we want to modify offset[:, cyclic_peptide_mask, cyclic_peptide_mask]
+
+        for cyclic_peptide_mask in cyclic_peptide_masks:
+            for b in range(offset.size(0)):  # for simplicity, iterate over batch dim in python (which is anyway of size 1 here..)
+                # Get the indices of the cyclic peptide
+                peptide_indices = torch.nonzero(cyclic_peptide_mask, as_tuple=True)[0] 
+
+                # Finally modify the entire offset array
+                grid_i, grid_j = torch.meshgrid(peptide_indices, peptide_indices, indexing='ij')
+                offset[b, grid_i, grid_j] = get_cyclic_offset(len(peptide_indices), device=offset.device)
+
+
+def get_seqsep(idx, cyclic_offset_masks):
     '''
     Input:
         - idx: residue indices of given sequence (B,L)
@@ -100,6 +153,7 @@ def get_seqsep(idx):
                   Sergey found that having sign in seqsep features helps a little
     '''
     seqsep = idx[:,None,:] - idx[:,:,None]
+    maybe_add_cyclic_offset(seqsep, cyclic_offset_masks)
     sign = torch.sign(seqsep)
     neigh = torch.abs(seqsep)
     neigh[neigh > 1] = 0.0 # if bonded -- 1.0 / else 0.0

@@ -1,3 +1,4 @@
+from typing import List, Optional
 import torch
 import torch.nn as nn
 from rfdiffusion.Embeddings import MSA_emb, Extra_emb, Templ_emb, Recycling
@@ -69,11 +70,11 @@ class RoseTTAFoldModule(nn.Module):
                 t1d=None, t2d=None, xyz_t=None, alpha_t=None,
                 msa_prev=None, pair_prev=None, state_prev=None,
                 return_raw=False, return_full=False, return_infer=False,
-                use_checkpoint=False, motif_mask=None, i_cycle=None, n_cycle=None):
+                use_checkpoint=False, motif_mask=None, i_cycle=None, n_cycle=None, cyclic_offset_masks: Optional[List[torch.Tensor]] = None):
 
         B, N, L = msa_latent.shape[:3]
         # Get embeddings
-        msa_latent, pair, state = self.latent_emb(msa_latent, seq, idx)
+        msa_latent, pair, state = self.latent_emb(msa_latent, seq, idx, cyclic_offset_masks)
         msa_full = self.full_emb(msa_full, seq, idx)
 
         # Do recycling
@@ -101,7 +102,8 @@ class RoseTTAFoldModule(nn.Module):
         is_frozen_residue = motif_mask if self.freeze_track_motif else torch.zeros_like(motif_mask).bool()
         msa, pair, R, T, alpha_s, state = self.simulator(seq, msa_latent, msa_full, pair, xyz[:,:,:3],
                                                          state, idx, use_checkpoint=use_checkpoint,
-                                                         motif_mask=is_frozen_residue)
+                                                         motif_mask=is_frozen_residue,
+                                                         cyclic_offset_masks=cyclic_offset_masks)
         
         if return_raw:
             # get last structure

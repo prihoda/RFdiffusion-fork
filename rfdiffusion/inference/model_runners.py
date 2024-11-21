@@ -1,3 +1,4 @@
+from typing import List
 import torch
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
@@ -551,6 +552,27 @@ class Sampler:
 
         return msa_masked, msa_full, seq[None], torch.squeeze(xyz_t, dim=0), idx, t1d, t2d, xyz_t, alpha_t
         
+    def get_cyclic_offset_masks(self) -> List[torch.Tensor]:
+        """ Returns masks for the RoseTTAFold model, to know with which residues use the cyclic offset. Multiple masks are possible. 
+        
+        inference.cyc_chains config should be a comma-separated list of `output` chains that should have cyclic offsets.
+        Designed chains are always the first ones (in the output), so for designing one chain just use 
+            - inference.cyc_chains=A
+        """
+        cyclic_offset_masks = []  # list of bool tensor of shape (L,) (same for the whole batch which is here of size B=1)
+        if self.inf_conf.cyc_chains:
+            cyclic_chains = self.inf_conf.cyc_chains.upper().split(',')  # ex: inference.cyc_chains=’a’, use ',' splitter to be consistent with ',' in e.g. ppi.hotspot_res
+            
+            # self.contig_map.hal is a list of tuples (output_chain_id, residue_index), the order of residues is as passed to the RF module
+            residue_output_chain = np.array([chain__resid[0] for chain__resid in self.contig_map.hal])
+
+            for cyclic_chain_id in cyclic_chains:
+                cyclic_offset_masks.append(torch.tensor(residue_output_chain == cyclic_chain_id).to(self.device))
+        # finally the cyclic masks will be passed to the RoseTTAFold model
+        #   - have found two usages of the offset -> first in PositionalEncoding2D and in second in get_seqsep which is used in Str2Str (structure refinement module)
+        return cyclic_offset_masks
+
+
     def sample_step(self, *, t, x_t, seq_init, final_step):
         '''Generate the next pose that the model should be supplied at timestep t-1.
 
@@ -571,6 +593,9 @@ class Sampler:
             seq_init, x_t, t)
 
         N,L = msa_masked.shape[:2]
+
+        # create cyclic offset masks for RosettaFold model
+        cyclic_offset_masks = self.get_cyclic_offset_masks()
 
         if self.symmetry is not None:
             idx_pdb, self.chain_idx = self.symmetry.res_idx_procesing(res_idx=idx_pdb)
@@ -594,7 +619,9 @@ class Sampler:
                                 state_prev = state_prev,
                                 t=torch.tensor(t),
                                 return_infer=True,
-                                motif_mask=self.diffusion_mask.squeeze().to(self.device))
+                                motif_mask=self.diffusion_mask.squeeze().to(self.device),
+                                cyclic_offset_masks=cyclic_offset_masks,
+                                )
 
         # prediction of X0 
         _, px0  = self.allatom(torch.argmax(seq_in, dim=-1), px0, alpha)
@@ -649,6 +676,9 @@ class SelfConditioning(Sampler):
             seq_init, x_t, t)
         B,N,L = xyz_t.shape[:3]
 
+        # create cyclic offset masks for RosettaFold model
+        cyclic_offset_masks = self.get_cyclic_offset_masks()
+
         ##################################
         ######## Str Self Cond ###########
         ##################################
@@ -684,7 +714,9 @@ class SelfConditioning(Sampler):
                                 state_prev = None,
                                 t=torch.tensor(t),
                                 return_infer=True,
-                                motif_mask=self.diffusion_mask.squeeze().to(self.device))   
+                                motif_mask=self.diffusion_mask.squeeze().to(self.device),
+                                cyclic_offset_masks=cyclic_offset_masks,
+                                )   
 
             if self.symmetry is not None and self.inf_conf.symmetric_self_cond:
                 px0 = self.symmetrise_prev_pred(px0=px0,seq_in=seq_in, alpha=alpha)[:,:,:3]
