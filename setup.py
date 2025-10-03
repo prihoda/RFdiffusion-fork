@@ -7,4 +7,6 @@ setup(name='rfdiffusion',
       url='https://github.com/RosettaCommons/RFdiffusion',
       scripts=["rfdiffusion/run_inference.py"],
       packages=find_packages(),
-      install_requires=[])
+      install_requires=[],
+      include_package_data=True
+)

@@ -65,7 +65,8 @@ class Sampler:
         if conf.inference.model_directory_path is not None:
             model_directory = conf.inference.model_directory_path
         else:
-            model_directory = f"{SCRIPT_DIR}/../../models"
+            # Store ./models inside installed rfdiffusion package directory by default
+            model_directory = f"{SCRIPT_DIR}/../models"
 
         print(f"Reading models from {model_directory}")
 
@@ -124,7 +125,8 @@ class Sampler:
         if conf.inference.schedule_directory_path is not None:
             schedule_directory = conf.inference.schedule_directory_path
         else:
-            schedule_directory = f"{SCRIPT_DIR}/../../schedules"
+            # Store ./schedules inside installed rfdiffusion package directory by default
+            schedule_directory = f"{SCRIPT_DIR}/../schedules"
 
         # Check for cache schedule
         if not os.path.exists(schedule_directory):
