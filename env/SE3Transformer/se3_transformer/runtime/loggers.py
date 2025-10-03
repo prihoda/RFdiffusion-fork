@@ -26,10 +26,15 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Dict, Any, Callable, Optional
 
-import dllogger
 import torch.distributed as dist
 import wandb
-from dllogger import Verbosity
+try:
+    import dllogger
+    from dllogger import Verbosity
+except ImportError:
+    dllogger = None
+    Verbosity = None
+    print("WARNING DLLogger is not installed. Please install if you want to use it: https://github.com/NVIDIA/dllogger")
 
 from se3_transformer.runtime.utils import rank_zero_only
 
@@ -85,6 +90,8 @@ class LoggerCollection(Logger):
 class DLLogger(Logger):
     def __init__(self, save_dir: pathlib.Path, filename: str):
         super().__init__()
+        if dllogger is None:
+            return
         if not dist.is_initialized() or dist.get_rank() == 0:
             save_dir.mkdir(parents=True, exist_ok=True)
             dllogger.init(
@@ -92,11 +99,15 @@ class DLLogger(Logger):
 
     @rank_zero_only
     def log_hyperparams(self, params):
+        if dllogger is None:
+            return
         params = self._sanitize_params(params)
         dllogger.log(step="PARAMETER", data=params)
 
     @rank_zero_only
     def log_metrics(self, metrics, step=None):
+        if dllogger is None:
+            return
         if step is None:
             step = tuple()
 
